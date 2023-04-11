@@ -24,97 +24,64 @@ class ArgrOp:
         self.paramN = paramN
 
 class Argr:
-    def __init__(self, root):
-        self.root = root
+    def __init__(self, op=None):
+        self.op = self.opFromCallable(self.opArgInvalid if None is op else op)
         self.opD = {}
         self.kvD = {}
-        
-    ArgRe = re.compile(r'-(\S+?)(?:=(.*))?', re.S)
-            
-    def argVGo(self, argV, argIOff):
-        self.argV = argV
-        self.argIOff = argIOff
-        self.op = None
-        # self.opV
-        self.argI = 0
-        for arg in argV:
-            if None is not (m := self.ArgRe.fullmatch(arg)):
-                # special arg. exec any accumulated op
-                if None is not self.op:
-                    self.opGo()
-                
-                # determine type of arg, process as op or key=val
-                k,v = m.group(1),m.group(2)
-                if None is v:
-                    self.op = self.opD.get(k)
-                    if None is self.op:
-                        self.op = self.opD[k] = self.opImplicit(k)
-                        self.opV = []
-                else:
-                    if None is (kv := self.kvD.get(k)):
-                        kv = self.kvD[k] = self.kvImplicit(k)
-                    kv(v)
-            else:
-                # normal arg
-                if None is self.op:
-                    self.normalGo(arg)
-                elif self.op.paramN != len(self.opV):
-                    self.opV.append(arg)
-                else:
-                    self.opGo()
-                    self.normalGo(arg)
-            self.argI += 1
-        if None is not self.op:
-            self.opGo()
-
-    def argVGoUninit(self, argV, argIOff):
-        self.uninitV = []
-        try:
-            self.argVGo(argV, argIOff)
-        except:
-            traceback.print_exception(*sys.exc_info())
-        for uninit in reversed(self.uninitV):
-            uninit()
 
     def uninitAdd(self, uninit):
         self.uninitV.append(uninit)
             
-    def normalGo(self, arg):
-        raise ArgNormalUnexpectedException(self)
+    def argVGo(self, argV, argIOff):
+        self.argV = argV
+        self.argIOff = argIOff
+        self.opV = []
+        self.argI = 0
+        for arg in argV:
+            self.arg1Go(arg)
+            self.argI += 1
+        self.opGo()
+        return self
+            
+    def argVGoUninit(self, argV, argIOff):
+        self.uninitV = []
+        try:
+            return self.argVGo(argV, argIOff)
+        except:
+            traceback.print_exception(*sys.exc_info())
+        finally:
+            for uninit in reversed(self.uninitV):
+                uninit()
+            
+    ArgRe = re.compile(r'-(\S+?)(?:=(.*))?', re.S)
+            
+    def arg1Go(self, arg):
+        if None is not (m := self.ArgRe.fullmatch(arg)):
+            # special arg. exec any accumulated op
+            self.opGo()
+                
+            # determine type of arg
+            k,v = m.group(1),m.group(2)
+            if None is v:
+                # op 
+                self.op = self.opD.get(k)
+                if None is self.op:
+                    self.op = self.opD[k] = self.opImplicit(k)
+            else:
+                # kv
+                kv = self.kvD.get(k)
+                if None is kv:
+                    kv = self.kvD[k] = self.kvImplicit(k)
+                kv(v)
+        else:
+            # normal arg
+            if len(self.opV) == self.op.paramN:
+                self.opGo()
+            self.opV.append(arg)
 
     def opGo(self):
         self.op.fun(*self.opV)
-        self.op = None
-
-    def keyLookup(self, key):
-        obj,attr = f'self.root.{key}'.rsplit('.', 1)
-        try:
-            obj = eval(obj)
-            return obj, attr, getattr(obj, attr)
-        except AttributeError:
-            pass
-        raise ArgInvalidException(self)
-
-    def kvImplicit(self, key):
-        obj,attr,val = self.keyLookup(key)
-        if None is not (argrKv := getattr(val, 'argrKv', None)):
-            return argrKv(obj, attr)
-        elif isinstance(val, str):
-            return lambda x: setattr(obj, attr, x)
-        elif isinstance(val, int):
-            return lambda x: setattr(obj, attr, int(x))
-        else:
-            raise ArgValueTypeUnexpectedException(self)
-
-    def kvLog(self, key, val, fun):
-        code = compile(f'self.root.{key} = fun if int(x) else noop', '<string>', 'exec')
-        kv = self.kvD[key] = lambda x: exec(code, globals(), {'self':self, 'fun':fun, 'x':x})
-        kv(val)
-    
-    #def kvSet(self, key, val, kv):
-    #    self.kvD[key] = kv
-    #    kv(val)
-    #    return kv
+        self.opV = []
         
     def opImplicit(self, key):
         obj,attr,val = self.keyLookup(key)
@@ -135,6 +102,45 @@ class Argr:
                 raise ArgCallableParametersException(self)
         return ArgrOp(fun, None if nVar else n)
 
+    def opArgInvalid(self, *args):
+        if args:
+            raise ArgUnexpectedException(self)
+
+    def keyTranslate(self, key):
+        return f'self.{key}'.rsplit('.', 1)
+        
+    def keyLookup(self, key):
+        obj,attr = self.keyTranslate(key)
+        try:
+            obj = eval(obj)
+            return obj, attr, getattr(obj, attr)
+        except AttributeError:
+            pass
+        raise ArgInvalidException(self)
+
+    def kvImplicit(self, key):
+        obj,attr,val = self.keyLookup(key)
+        if None is not (argrKv := getattr(val, 'argrKv', None)):
+            return argrKv(obj, attr)
+        elif isinstance(val, str):
+            return lambda x: setattr(obj, attr, x)
+        elif isinstance(val, float):
+            return lambda x: setattr(obj, attr, float(x))
+        elif isinstance(val, int):
+            return lambda x: setattr(obj, attr, int(x))
+        else:
+            raise ArgValueTypeUnexpectedException(self)
+
+    def kvLog(self, key, val, fun):
+        code = compile(f'self.{key} = fun if int(x) else noop', '<string>', 'exec')
+        kv = self.kvD[key] = lambda x: exec(code, globals(), {'self':self, 'fun':fun, 'x':x})
+        kv(val)
+    
+    #def kvSet(self, key, val, kv):
+    #    self.kvD[key] = kv
+    #    kv(val)
+    #    return kv
+        
 #------------------------------------------------------------------------------------------------------------------------
 # PathArg PathSubArg
 

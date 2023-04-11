@@ -8,7 +8,16 @@ Base python library required by most other xmzt python projects.
 
 **optslib**: command-line processing and pre-fab "main()" classes.
 
-## Build
+## Stable build
+```
+python -m build && pip install .
+
+## Development build (editable mode)
+```
+python -m pip install -e .
+```
+
+## Prerequisites
 ```
 pacman -S python-pip python-build python-setuptools
 ```
